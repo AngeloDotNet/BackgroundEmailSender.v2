@@ -2,7 +2,6 @@
 using BackgroundEmailSenderSample.Models.InputModels;
 using Microsoft.AspNetCore.Identity.UI.Services;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Configuration;
 
 namespace BackgroundEmailSenderSample.Controllers
 {

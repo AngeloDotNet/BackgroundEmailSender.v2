@@ -10,6 +10,7 @@ namespace BackgroundEmailSenderSample.Models.ValueTypes
         public string Value { get; }
 
         public static explicit operator Sql(string value) => new Sql(value);
+        
         public override string ToString() {
             return this.Value;
         }

@@ -85,12 +85,9 @@ namespace BackgroundEmailSenderSample.HostedServices
 
                 logger.LogInformation("Email delivery started: {count} message(s) were resumed for delivery", dataSet.Tables[0].Rows.Count);
 
-                // deliveryCancellationTokenSource = new CancellationTokenSource();
-                // deliveryTask = DeliverAsync(deliveryCancellationTokenSource.Token);
                 cancellationTokenSource = new CancellationTokenSource();   
                 backgroundTask = DoWork(cancellationTokenSource.Token);   
             
-                // return Task.CompletedTask;
                 await Task.CompletedTask;
             }
             catch (Exception startException)
