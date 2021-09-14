@@ -17,15 +17,12 @@ using BackgroundEmailSenderSample.Models.Enums;
 
 namespace BackgroundEmailSenderSample.HostedServices
 {
-    //public class EmailSenderHostedService : IEmailSender, IHostedService, IDisposable
     public class EmailSenderHostedService : IEmailSender, IHostedService
     {
         private readonly BufferBlock<MimeMessage> mailMessages;
         private readonly ILogger logger;
         private readonly IOptionsMonitor<SmtpOptions> optionsMonitor;
         private readonly IDatabaseAccessor db;
-        // private CancellationTokenSource deliveryCancellationTokenSource;
-        // private Task deliveryTask;
         private CancellationTokenSource cancellationTokenSource; 
         private Task backgroundTask;
 
@@ -52,34 +49,73 @@ namespace BackgroundEmailSenderSample.HostedServices
             await this.mailMessages.SendAsync(message);
         }
 
+        
+        private MimeMessage CreateMessage(string email, string subject, string htmlMessage, string messageId = null)
+        {
+            var message = new MimeMessage();
+
+            message.From.Add(MailboxAddress.Parse(optionsMonitor.CurrentValue.Sender));
+            message.To.Add(MailboxAddress.Parse(email));
+            message.Subject = subject;
+            message.MessageId = messageId ?? SequentialGuidGenerator.Instance.NewGuid().ToString();
+            message.Body = new TextPart("html") { Text = htmlMessage };
+
+            return message;
+        }
+
         // FONTE: https://www.aspitalia.com/script/1276/Operazioni-Background-Hosted-Service-ASP.NET-Core.aspx
         public Task StartAsync(CancellationToken cancellationToken) 
         {   
-            //Questo ci serve per interrompere il lavoro quando l'applicazione viene arrestata   
-            cancellationTokenSource = new CancellationTokenSource();   
-            backgroundTask = DoWork(cancellationTokenSource.Token);   
+            logger.LogInformation("Starting background e-mail delivery");
+
+            FormattableString query = $@"SELECT Id, Recipient, Subject, Message FROM EmailMessages WHERE Status NOT IN ({nameof(MailStatus.Sent)}, {nameof(MailStatus.Deleted)})";
+            DataSet dataSet = await db.QueryAsync(query);
+
+            try
+            {
+                foreach (DataRow row in dataSet.Tables[0].Rows)
+                {
+                    var message = CreateMessage(Convert.ToString(row["Recipient"]),
+                                                Convert.ToString(row["Subject"]),
+                                                Convert.ToString(row["Message"]),
+                                                Convert.ToString(row["Id"]));
+
+                    await this.mailMessages.SendAsync(message, token);
+                }
+
+                logger.LogInformation("Email delivery started: {count} message(s) were resumed for delivery", dataSet.Tables[0].Rows.Count);
+
+                // deliveryCancellationTokenSource = new CancellationTokenSource();
+                // deliveryTask = DeliverAsync(deliveryCancellationTokenSource.Token);
+                cancellationTokenSource = new CancellationTokenSource();   
+                backgroundTask = DoWork(cancellationTokenSource.Token);   
             
-            return Task.CompletedTask; 
+            return Task.CompletedTask;
+            }
+            catch (Exception startException)
+            {
+                logger.LogError(startException, "Couldn't start email delivery");
+            }
         }
 
         public async Task DoWork(CancellationToken token) 
         {   
+            var options = this.optionsMonitor.CurrentValue;
+
             //Finché non viene richiesta la cancellazione...   
             while (!token.IsCancellationRequested)   
             {     
                 try 
                 {       
-                    //Aspettiamo un po' prima di compiere l'operazione.       
-                    //Ovviamente il valore 5000 può essere calcolato in base alle esigenze       
-                    //es. numero di millsecondi restanti ad una specifica data/ora       
-                    //Ad ogni iterazione del ciclo while lo puoi ricalcolare (se è differente di volta in volta)       
-                    await Task.Delay(5000, token);        
+                    //Aspettiamo N secondi prima di compiere l'operazione.       
+                    //await Task.Delay(5000, token);        
+                    //In questo caso il tempo di delay è 30 secondi ed il valore viene letto dal file APPSETTINGS.JSON
+                    await Task.Delay(options.DelayMessage, token);
                     
                     //TODO: Qui fai il lavoro      
                 } 
                 catch (OperationCanceledException) 
                 {       
-                    //Se è stata richiesta la cancellazione, usciamo dal ciclo       
                     break;     
                 }   
             } 
@@ -87,64 +123,13 @@ namespace BackgroundEmailSenderSample.HostedServices
 
         public async Task StopAsync(CancellationToken cancellationToken) 
         {   
-            cancellationTokenSource.Cancel(); 
+            logger.LogInformation("Stopping e-mail background delivery");
+
+            cancellationTokenSource.Cancel();
+            cancellationTokenSource = null;
 
             await Task.Delay(5000, cancellationToken);
         }
-
-        // public async Task StartAsync(CancellationToken token)
-        // {
-        //     logger.LogInformation("Starting background e-mail delivery");
-
-        //     FormattableString query = $@"SELECT Id, Recipient, Subject, Message FROM EmailMessages WHERE Status NOT IN ({nameof(MailStatus.Sent)}, {nameof(MailStatus.Deleted)})";
-        //     DataSet dataSet = await db.QueryAsync(query);
-
-        //     try
-        //     {
-        //         foreach (DataRow row in dataSet.Tables[0].Rows)
-        //         {
-        //             var message = CreateMessage(Convert.ToString(row["Recipient"]),
-        //                                         Convert.ToString(row["Subject"]),
-        //                                         Convert.ToString(row["Message"]),
-        //                                         Convert.ToString(row["Id"]));
-
-        //             await this.mailMessages.SendAsync(message, token);
-        //         }
-
-        //         logger.LogInformation("Email delivery started: {count} message(s) were resumed for delivery", dataSet.Tables[0].Rows.Count);
-
-        //         deliveryCancellationTokenSource = new CancellationTokenSource();
-        //         deliveryTask = DeliverAsync(deliveryCancellationTokenSource.Token);
-        //     }
-        //     catch (Exception startException)
-        //     {
-        //         logger.LogError(startException, "Couldn't start email delivery");
-        //     }
-        // }
-
-        // public async Task StopAsync(CancellationToken token)
-        // {
-        //     CancelDeliveryTask();
-        //     // Wait for the send task to stop gracefully. If it takes too much, then we stop waiting
-        //     // as soon as the application cancels the token (i.e when it signals it's not willing to wait any longer)
-        //     await Task.WhenAny(deliveryTask, Task.Delay(Timeout.Infinite, token));
-        // }
-
-        // private void CancelDeliveryTask()
-        // {
-        //     try
-        //     {
-        //         if (deliveryCancellationTokenSource != null)
-        //         {
-        //             logger.LogInformation("Stopping e-mail background delivery");
-        //             deliveryCancellationTokenSource.Cancel();
-        //             deliveryCancellationTokenSource = null;
-        //         }
-        //     }
-        //     catch
-        //     {
-        //     }
-        // }
 
         // public async Task DeliverAsync(CancellationToken token)
         // {
@@ -201,25 +186,5 @@ namespace BackgroundEmailSenderSample.HostedServices
 
         //     logger.LogInformation("E-mail background delivery stopped");
         // }
-
-        // public void Dispose()
-        // {
-        //     CancelDeliveryTask();
-        // }
-
-        private MimeMessage CreateMessage(string email, string subject, string htmlMessage, string messageId = null)
-        {
-            var message = new MimeMessage();
-
-            message.From.Add(MailboxAddress.Parse(optionsMonitor.CurrentValue.Sender));
-            message.To.Add(MailboxAddress.Parse(email));
-            message.Subject = subject;
-
-            // Se il messageId non è stato fornito, allora lo genero.
-            message.MessageId = messageId ?? SequentialGuidGenerator.Instance.NewGuid().ToString();
-            message.Body = new TextPart("html") { Text = htmlMessage };
-
-            return message;
-        }
     }
 }
