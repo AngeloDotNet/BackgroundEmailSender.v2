@@ -64,7 +64,7 @@ namespace BackgroundEmailSenderSample.HostedServices
         }
 
         // FONTE: https://www.aspitalia.com/script/1276/Operazioni-Background-Hosted-Service-ASP.NET-Core.aspx
-        public Task StartAsync(CancellationToken cancellationToken) 
+        public async Task StartAsync(CancellationToken cancellationToken) 
         {   
             logger.LogInformation("Starting background e-mail delivery");
 
@@ -80,7 +80,7 @@ namespace BackgroundEmailSenderSample.HostedServices
                                                 Convert.ToString(row["Message"]),
                                                 Convert.ToString(row["Id"]));
 
-                    await this.mailMessages.SendAsync(message, token);
+                    await this.mailMessages.SendAsync(message, cancellationToken);
                 }
 
                 logger.LogInformation("Email delivery started: {count} message(s) were resumed for delivery", dataSet.Tables[0].Rows.Count);
@@ -90,7 +90,8 @@ namespace BackgroundEmailSenderSample.HostedServices
                 cancellationTokenSource = new CancellationTokenSource();   
                 backgroundTask = DoWork(cancellationTokenSource.Token);   
             
-            return Task.CompletedTask;
+                // return Task.CompletedTask;
+                await Task.CompletedTask;
             }
             catch (Exception startException)
             {
