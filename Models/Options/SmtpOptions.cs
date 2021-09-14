@@ -13,5 +13,6 @@ namespace BackgroundEmailSenderSample.Models.Options
         public string Sender { get; set; }
         public int MaxSenderCount { get; set; }
         public TimeSpan DelayOnError { get; set; }
+        public TimeSpan DelayMessage { get; set; }
     }
 }
