@@ -110,7 +110,59 @@ namespace BackgroundEmailSenderSample.HostedServices
                     //In questo caso il tempo di delay è 30 secondi ed il valore viene letto dal file APPSETTINGS.JSON
                     await Task.Delay(options.DelayMessage, token);
                     
-                    //TODO: Qui fai il lavoro      
+                    logger.LogInformation("E-mail background delivery started");
+
+                    while (!token.IsCancellationRequested)
+                    {
+                        MimeMessage message = null;
+                        try
+                        {
+                            message = await mailMessages.ReceiveAsync(token);
+
+                            //var options = this.optionsMonitor.CurrentValue;
+                            using var client = new SmtpClient();
+
+                            await client.ConnectAsync(options.Host, options.Port, options.Security, token);
+                            if (!string.IsNullOrEmpty(options.Username))
+                            {
+                                await client.AuthenticateAsync(options.Username, options.Password, token);
+                            }
+
+                            await client.SendAsync(message, token);
+                            await client.DisconnectAsync(true, token);
+
+                            await db.CommandAsync($"UPDATE EmailMessages SET Status={nameof(MailStatus.Sent)} WHERE Id={message.MessageId}", token);
+                            logger.LogInformation($"E-mail sent successfully to {message.To}");
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            break;
+                        }
+                        catch (Exception sendException)
+                        {
+                            var recipient = message?.To[0];
+                            logger.LogError(sendException, "Couldn't send an e-mail to {recipient}", recipient);
+
+                            // Increment the sender count
+                            try
+                            {
+                                bool shouldRequeue = await db.QueryScalarAsync<bool>($"UPDATE EmailMessages SET SenderCount = SenderCount + 1, Status=CASE WHEN SenderCount < {optionsMonitor.CurrentValue.MaxSenderCount} THEN Status ELSE {nameof(MailStatus.Deleted)} END WHERE Id={message.MessageId}; SELECT COUNT(*) FROM EmailMessages WHERE Id={message.MessageId} AND Status NOT IN ({nameof(MailStatus.Deleted)}, {nameof(MailStatus.Sent)})", token);
+                                if (shouldRequeue)
+                                {
+                                    await mailMessages.SendAsync(message, token);
+                                }
+                            }
+                            catch (Exception requeueException)
+                            {
+                                logger.LogError(requeueException, "Couldn't requeue message to {0}", recipient);
+                            }
+
+                            // An unexpected error occurred during delivery, so we wait before moving on
+                            await Task.Delay(optionsMonitor.CurrentValue.DelayOnError, token);
+                        }
+                    }
+
+                    logger.LogInformation("E-mail background delivery stopped");
                 } 
                 catch (OperationCanceledException) 
                 {       
@@ -128,61 +180,5 @@ namespace BackgroundEmailSenderSample.HostedServices
 
             await Task.Delay(5000, cancellationToken);
         }
-
-        // public async Task DeliverAsync(CancellationToken token)
-        // {
-        //     logger.LogInformation("E-mail background delivery started");
-        //     while (!token.IsCancellationRequested)
-        //     {
-        //         MimeMessage message = null;
-        //         try
-        //         {
-        //             message = await mailMessages.ReceiveAsync(token);
-
-        //             var options = this.optionsMonitor.CurrentValue;
-        //             using var client = new SmtpClient();
-
-        //             await client.ConnectAsync(options.Host, options.Port, options.Security, token);
-        //             if (!string.IsNullOrEmpty(options.Username))
-        //             {
-        //                 await client.AuthenticateAsync(options.Username, options.Password, token);
-        //             }
-
-        //             await client.SendAsync(message, token);
-        //             await client.DisconnectAsync(true, token);
-
-        //             await db.CommandAsync($"UPDATE EmailMessages SET Status={nameof(MailStatus.Sent)} WHERE Id={message.MessageId}", token);
-        //             logger.LogInformation($"E-mail sent successfully to {message.To}");
-        //         }
-        //         catch (OperationCanceledException)
-        //         {
-        //             break;
-        //         }
-        //         catch (Exception sendException)
-        //         {
-        //             var recipient = message?.To[0];
-        //             logger.LogError(sendException, "Couldn't send an e-mail to {recipient}", recipient);
-
-        //             // Increment the sender count
-        //             try
-        //             {
-        //                 bool shouldRequeue = await db.QueryScalarAsync<bool>($"UPDATE EmailMessages SET SenderCount = SenderCount + 1, Status=CASE WHEN SenderCount < {optionsMonitor.CurrentValue.MaxSenderCount} THEN Status ELSE {nameof(MailStatus.Deleted)} END WHERE Id={message.MessageId}; SELECT COUNT(*) FROM EmailMessages WHERE Id={message.MessageId} AND Status NOT IN ({nameof(MailStatus.Deleted)}, {nameof(MailStatus.Sent)})", token);
-        //                 if (shouldRequeue)
-        //                 {
-        //                     await mailMessages.SendAsync(message, token);
-        //                 }
-        //             }
-        //             catch (Exception requeueException)
-        //             {
-        //                 logger.LogError(requeueException, "Couldn't requeue message to {0}", recipient);
-        //             }
-
-        //             // An unexpected error occurred during delivery, so we wait before moving on
-        //             await Task.Delay(optionsMonitor.CurrentValue.DelayOnError, token);
-        //         }
-        //     }
-
-        //     logger.LogInformation("E-mail background delivery stopped");
-        // }
     }
 }
